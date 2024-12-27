@@ -1,4 +1,4 @@
-# Joomla-V3.10-LTS-patches
+# Joomla-cms=3.10-lts-updates
 Public release of Legacy Joomla Project 3rd party mantenance/security updates for the Joomla! V3.10 CMS.
 
 ## Current update package:
