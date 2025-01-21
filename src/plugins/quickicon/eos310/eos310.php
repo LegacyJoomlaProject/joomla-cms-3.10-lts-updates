@@ -10,6 +10,7 @@
 defined('_JEXEC') or die;
 
 use Joomla\CMS\Factory;
+use Joomla\CMS\Component\ComponentHelper;
 use Joomla\CMS\HTML\HTMLHelper;
 use Joomla\CMS\Language\Text;
 use Joomla\CMS\Plugin\CMSPlugin;
@@ -27,7 +28,7 @@ class PlgQuickiconEos310 extends CMSPlugin
 	 * @var    string
 	 * @since  3.10.0
 	 */
-	const EOS_DATE = '2023-08-17';
+	static $EOS_DATE = '2023-08-17';
 
 	/**
 	 * Application object
@@ -61,6 +62,16 @@ class PlgQuickiconEos310 extends CMSPlugin
 	 */
 	private $currentMessage = false;
 
+
+	/**
+	 * Holding the current version string to be inserted into popup text
+	 *
+	 * @var    string
+	 * @since  3.10.19
+	 */	
+	protected $versionString="";
+
+
 	/**
 	 * Constructor.
 	 *
@@ -73,11 +84,75 @@ class PlgQuickiconEos310 extends CMSPlugin
 	{
 		parent::__construct($subject, $config);
 
-		$diff           = Factory::getDate()->diff(Factory::getDate(static::EOS_DATE));
-		$monthsUntilEOS = floor($diff->days / 30.417);
-
-		$this->currentMessage = $this->getMessageInfo($monthsUntilEOS, $diff->invert);
+		$this->versionString = \Joomla\CMS\Version::getShortVersion();
+		// -- Check if there is a Legacy Joomla Project subscription key.
+		$cparams = ComponentHelper::getParams( 'com_joomlaupdate' );
+		$cls = get_class($cparams);
+		$updturl = $cparams->get( 'customurl' );
+		$webkey="";
+		
+		if($updturl){
+		    if(stripos($updturl,"update.legacyjoomla.com")){
+		        // Legacy joomla update
+		        if($pos = stripos($updturl, "/update/")){
+		            $webkey = substr($updturl,$pos+8,16);
+		            if(strlen($webkey) == 16){
+		                // Valid webkey .... check subscription date with server.
+		                $subinfo = $this->ljpSubInfo($webkey);
+		                PlgQuickiconEos310::$EOS_DATE = $subinfo['sub_end'];
+                        $msg = $this->getLjpMessage($subinfo);
+                        //$this->currentMessage = $msg;
+                        //return;
+		            }
+		        }
+		    } else {
+		      // This is an unknown update channel.
+    		    $msg = array(
+    		        'id'            => 5,
+    		        'messageText'   => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_EXT_SUPPORT',
+    		        'quickiconText' => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_EXT_SUPPORT_SHORT',
+    		        'messageType'   => 'warning',
+    		        'image'         => 'warning-circle',
+    		        'messageLink'   => $updturl,
+    		        'groupText'     => 'PLG_QUICKICON_EOS310_GROUPNAME_EOS',
+    		        'snoozable'     => true,
+    		    );
+		    }
+		} else {
+		    $diff           = Factory::getDate()->diff(Factory::getDate(PlgQuickiconEos310::$EOS_DATE));
+		    $monthsUntilEOS = floor($diff->days / 30.417);
+		    $msg = $this->getMessageInfo($monthsUntilEOS, $diff->invert);
+		}		
+		$this->currentMessage = $msg;
 	}
+	
+	/**
+	 * Contact the Legacy Joomla Project update server to check status of webkey subscription
+	 *
+	 * @param   string  $webkey  The subscription webkey
+	 *
+	 * @return  array|void  An associative array with subscription information or result error code 
+	 *						from update server.
+	 *
+	 * @since   3.10.19-ljp
+	 */
+	function ljpSubInfo($webkey){
+	    $ch = curl_init();
+	    $url = "https://update.legacyjoomla.com/update.php?cmd=sub-info&webkey=$webkey";
+	    curl_setopt($ch, CURLOPT_URL, $url);
+	    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+	    curl_setopt($ch, CURLOPT_POST, 1);
+	    //$headers = array();
+	    //$headers[] = 'Content-Type: application/json';
+	    //$headers[] = 'Authorization: Bearer ' . $this->access_token;
+	    //curl_setopt($ch, CURLOPT_HTTPHEADER, $headers);
+	    $json = curl_exec($ch);
+	    $err = curl_error($ch);
+	    curl_close($ch);
+	    $result = json_decode($json, true);	    
+	    return $result;
+	}
+	
 
 	/**
 	 * Check and show the the alert and quickicon message
@@ -110,12 +185,22 @@ class PlgQuickiconEos310 extends CMSPlugin
 			HTMLHelper::_('script', 'plg_quickicon_eos310/snooze.js', array('version' => 'auto', 'relative' => true));
 
 			// Build the  message to be displayed in the cpanel
-			$messageText = Text::sprintf(
-				$this->currentMessage['messageText'],
-				HTMLHelper::_('date', static::EOS_DATE, Text::_('DATE_FORMAT_LC3')),
-				$this->currentMessage['messageLink']
-			);
-
+			if(array_key_exists('externalLink',$this->currentMessage)){
+			    $messageText = Text::sprintf(
+			        $this->currentMessage['messageText'],
+			        HTMLHelper::_('date', PlgQuickiconEos310::$EOS_DATE, Text::_('DATE_FORMAT_LC3')),
+			        $this->currentMessage['messageLink'],
+			        $this->versionString,
+			        $this->currentMessage['externalLink'],
+			        );
+			} else {
+                $messageText = Text::sprintf(
+    				$this->currentMessage['messageText'],
+    			    HTMLHelper::_('date', PlgQuickiconEos310::$EOS_DATE, Text::_('DATE_FORMAT_LC3')),
+    				$this->currentMessage['messageLink'],
+                    $this->versionString
+    			);
+			}
 			if ($this->currentMessage['snoozable'])
 			{
 				$messageText .=
@@ -135,7 +220,7 @@ class PlgQuickiconEos310 extends CMSPlugin
 			$this->currentMessage['quickiconText'],
 			HTMLHelper::_(
 				'date',
-				static::EOS_DATE,
+			    PlgQuickiconEos310::$EOS_DATE,
 				Text::_('DATE_FORMAT_LC3')
 			)
 		);
@@ -182,9 +267,61 @@ class PlgQuickiconEos310 extends CMSPlugin
 			$this->saveParams();
 		}
 	}
+	
+	/**
+	 * Return the text to be displayed based on subscription time remaining.
+	 *
+	 * @param   array  $subInfo  LJP Subscription information array.
+	 *
+	 * @return  array|bool  An array with the message to be displayed or false
+	 *
+	 * @since   3.10.19-ljp
+	 */
+	private function getLjpMessage($subInfo){
+	    // The subscription is expired
+	    if ($subInfo['sub_days_remain'] < 0)
+	    {
+
+	        return array(
+	            'id'            => 5,
+	            'messageText'   => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_ELTS_SUPPORT_ENDED',
+	            'quickiconText' => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_ELTS_SUPPORT_ENDED_SHORT',
+	            'messageType'   => 'error',
+	            'image'         => 'minus-circle',
+	            'messageLink'   => 'https://legacyjoomla.com',
+	            'externalLink'  => 'https://github.com/LegacyJoomlaProject/joomla-cms-3.10-lts-updates',
+	            'groupText'     => 'PLG_QUICKICON_EOS310_GROUPNAME_EOS',
+	            'snoozable'     => false,
+	        );
+
+	        
+	    } 
+	    if ($subInfo['sub_days_remain'] < 31) {
+	        return array(
+	            'id'            => 4,
+	            'messageText'   => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_ELTS_SUPPORT_ENDING',
+	            'quickiconText' => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_ELTS_SUPPORT_ENDING_SHORT',
+	            'messageType'   => 'warning',
+	            'image'         => 'warning-circle',
+	            'messageLink'   => 'https://legacyjoomla.com',
+	            'groupText'     => 'PLG_QUICKICON_EOS310_GROUPNAME_EOS',
+	            'snoozable'     => false,
+	        );
+	    }
+	    return array(
+	        'id'            => 1,
+	        'messageText'   => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_ELTS_SUPPORT',
+	        'quickiconText' => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_ELTS_SUPPORT_SHORT',
+	        'messageType'   => 'info',
+	        'image'         => 'info-circle',
+	        'messageLink'   => 'https://docs.joomla.org/Special:MyLanguage/Planning_for_Mini-Migration_-_Joomla_3.10.x_to_4.x',
+	        'groupText'     => 'PLG_QUICKICON_EOS310_GROUPNAME_EOS',
+	        'snoozable'     => true,
+	    );
+	}
 
 	/**
-	 * Return the texts to be displayed based on the time until we reach EOS
+	 * Return the EOS text to be displayed for manually-installed package without update key 
 	 *
 	 * @param   integer  $monthsUntilEOS  The months until we reach EOS
 	 * @param   integer  $inverted        Have we surpassed the EOS date
@@ -202,74 +339,14 @@ class PlgQuickiconEos310 extends CMSPlugin
 				'id'            => 5,
 				'messageText'   => 'PLG_QUICKICON_EOS310_MESSAGE_ERROR_SUPPORT_ENDED',
 				'quickiconText' => 'PLG_QUICKICON_EOS310_MESSAGE_ERROR_SUPPORT_ENDED_SHORT',
-				'messageType'   => 'error',
-				'image'         => 'minus-circle',
-				'messageLink'   => 'https://docs.joomla.org/Special:MyLanguage/Planning_for_Mini-Migration_-_Joomla_3.10.x_to_4.x',
+			    'messageType'   => 'warning',
+			    'image'         => 'warning-circle',
+			    'messageLink'   => 'https://legacyjoomla.com',
+			    'externalLink'  => 'https://github.com/LegacyJoomlaProject/joomla-cms-3.10-lts-updates',
 				'groupText'     => 'PLG_QUICKICON_EOS310_GROUPNAME_EOS',
 				'snoozable'     => false,
 			);
 		}
-
-		// The security support is ending in 6 months
-		if ($monthsUntilEOS < 6)
-		{
-			return array(
-				'id'            => 4,
-				'messageText'   => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_SUPPORT_ENDING',
-				'quickiconText' => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_SUPPORT_ENDING_SHORT',
-				'messageType'   => 'warning',
-				'image'         => 'warning-circle',
-				'messageLink'   => 'https://docs.joomla.org/Special:MyLanguage/Planning_for_Mini-Migration_-_Joomla_3.10.x_to_4.x',
-				'groupText'     => 'PLG_QUICKICON_EOS310_GROUPNAME_WARNING',
-				'snoozable'     => true,
-			);
-		}
-
-		// We are in security only mode now, 12 month to go from now on
-		if ($monthsUntilEOS < 12)
-		{
-			return array(
-				'id'            => 3,
-				'messageText'   => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_SECURITY_ONLY',
-				'quickiconText' => 'PLG_QUICKICON_EOS310_MESSAGE_WARNING_SECURITY_ONLY_SHORT',
-				'messageType'   => 'warning',
-				'image'         => 'warning-circle',
-				'messageLink'   => 'https://docs.joomla.org/Special:MyLanguage/Planning_for_Mini-Migration_-_Joomla_3.10.x_to_4.x',
-				'groupText'     => 'PLG_QUICKICON_EOS310_GROUPNAME_WARNING',
-				'snoozable'     => true,
-			);
-		}
-
-		// We still have 16 month to go, lets remind our users about the pre upgrade checker
-		if ($monthsUntilEOS < 16)
-		{
-			return array(
-				'id'            => 2,
-				'messageText'   => 'PLG_QUICKICON_EOS310_MESSAGE_INFO_02',
-				'quickiconText' => 'PLG_QUICKICON_EOS310_MESSAGE_INFO_02_SHORT',
-				'messageType'   => 'info',
-				'image'         => 'info-circle',
-				'messageLink'   => 'https://docs.joomla.org/Special:MyLanguage/Pre-Update_Check',
-				'groupText'     => 'PLG_QUICKICON_EOS310_GROUPNAME_INFO',
-				'snoozable'     => true,
-			);
-		}
-
-		// Lets start our messages 2 month after the initial release, still 22 month to go
-		if ($monthsUntilEOS < 22)
-		{
-			return array(
-				'id'            => 1,
-				'messageText'   => 'PLG_QUICKICON_EOS310_MESSAGE_INFO_01',
-				'quickiconText' => 'PLG_QUICKICON_EOS310_MESSAGE_INFO_01_SHORT',
-				'messageType'   => 'info',
-				'image'         => 'info-circle',
-				'messageLink'   => 'https://www.joomla.org/4/#features',
-				'groupText'     => 'PLG_QUICKICON_EOS310_GROUPNAME_INFO',
-				'snoozable'     => true,
-			);
-		}
-
 		return false;
 	}
 
